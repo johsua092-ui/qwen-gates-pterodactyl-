@@ -8,39 +8,72 @@ app.use(express.json({ limit: "20mb" }))
 const PORT = process.env.PORT || process.env.SERVER_PORT || 3000
 const GATEWAY_KEY = process.env.GATEWAY_KEY || "" // kunci yang harus dikirim client
 
+function env(name, fallback) {
+  const v = process.env[name]
+  return v && v.trim() ? v.trim() : fallback
+}
+
 const PROVIDERS = {
   qwen: {
-    baseUrl: process.env.QWEN_BASE_URL || "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+    baseUrl: env("QWEN_BASE_URL", "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"),
     apiKey: process.env.QWEN_API_KEY || "",
     type: "openai",
   },
   glm: {
-    baseUrl: process.env.GLM_BASE_URL || "https://open.bigmodel.cn/api/paas/v4",
+    baseUrl: env("GLM_BASE_URL", "https://open.bigmodel.cn/api/paas/v4"),
     apiKey: process.env.GLM_API_KEY || "",
     type: "openai",
   },
   claude: {
-    baseUrl: process.env.CLAUDE_BASE_URL || "https://api.anthropic.com/v1",
+    baseUrl: env("CLAUDE_BASE_URL", "https://api.anthropic.com/v1"),
     apiKey: process.env.CLAUDE_API_KEY || "",
     type: "anthropic",
   },
 }
 
-// pilih provider dari nama model
-function resolveProvider(model = "") {
-  const m = String(model).toLowerCase()
-  if (m.includes("/")) {
-    const p = m.split("/")[0]
-    if (PROVIDERS[p]) return p
-  }
-  if (m.startsWith("qwen")) return "qwen"
-  if (m.startsWith("glm")) return "glm"
-  if (m.startsWith("claude")) return "claude"
-  return null
+// ---- Alias model ----
+// Nama ramah yang dipakai client -> { provider, model (id upstream) }.
+// ID upstream bisa dioverride lewat env, jadi begitu provider rilis versi baru
+// tinggal ganti env tanpa ubah kode. Nama alias sengaja dibikin lowercase.
+const MODEL_ALIASES = {
+  // Anthropic (Claude)
+  "opus-4.8": { provider: "claude", model: env("MODEL_OPUS_48", "claude-opus-4-1") },
+  "sonnet-5": { provider: "claude", model: env("MODEL_SONNET_5", "claude-sonnet-4-5") },
+  "fable-5": { provider: "claude", model: env("MODEL_FABLE_5", "claude-haiku-4-5") },
+  // Qwen (DashScope)
+  "qwen-max-3.7": { provider: "qwen", model: env("MODEL_QWEN_MAX_37", "qwen-max") },
+  "qwen-plus-3.7": { provider: "qwen", model: env("MODEL_QWEN_PLUS_37", "qwen-plus") },
+  // GLM (Zhipu)
+  "glm-5.2": { provider: "glm", model: env("MODEL_GLM_52", "glm-4-plus") },
 }
 
-function stripPrefix(model) {
-  return String(model).includes("/") ? String(model).split("/").slice(1).join("/") : model
+// Model "mentah" yang tetap boleh dipanggil langsung (buat kompatibilitas lama).
+const RAW_MODELS = [
+  "qwen-plus", "qwen-max", "qwen-turbo",
+  "glm-4-plus", "glm-4", "glm-4-flash",
+  "claude-3-5-sonnet-20241022", "claude-3-5-haiku-20241022",
+]
+
+// Ubah nama model (alias / mentah / provider/model) jadi { provider, model }.
+function resolveModel(input = "") {
+  const raw = String(input).trim()
+  const key = raw.toLowerCase()
+
+  // 1) Alias ramah
+  if (MODEL_ALIASES[key]) return { provider: MODEL_ALIASES[key].provider, model: MODEL_ALIASES[key].model, alias: key }
+
+  // 2) Format eksplisit provider/model (contoh: claude/claude-3-5-haiku-20241022)
+  if (raw.includes("/")) {
+    const p = key.split("/")[0]
+    if (PROVIDERS[p]) return { provider: p, model: raw.split("/").slice(1).join("/") }
+  }
+
+  // 3) Tebak dari prefix
+  if (key.startsWith("qwen")) return { provider: "qwen", model: raw }
+  if (key.startsWith("glm")) return { provider: "glm", model: raw }
+  if (key.startsWith("claude")) return { provider: "claude", model: raw }
+
+  return null
 }
 
 // auth: client wajib kirim Authorization: Bearer <GATEWAY_KEY>
@@ -54,38 +87,37 @@ function checkAuth(req, res, next) {
   next()
 }
 
-app.get("/", (req, res) => res.json({ status: "ok", providers: Object.keys(PROVIDERS) }))
+app.get("/", (req, res) => res.json({
+  status: "ok",
+  providers: Object.keys(PROVIDERS),
+  models: Object.keys(MODEL_ALIASES),
+}))
 app.get("/health", (req, res) => res.json({ status: "ok" }))
 
 app.get("/v1/models", checkAuth, (req, res) => {
-  const ids = [
-    "qwen-plus", "qwen-max", "qwen-turbo",
-    "glm-4-plus", "glm-4", "glm-4-flash",
-    "claude-3-5-sonnet-20241022", "claude-3-5-haiku-20241022",
-  ]
+  const ids = [...Object.keys(MODEL_ALIASES), ...RAW_MODELS]
   res.json({
     object: "list",
-    data: ids.map((id) => ({ id, object: "model", owned_by: resolveProvider(id) })),
+    data: ids.map((id) => ({ id, object: "model", owned_by: resolveModel(id)?.provider || "unknown" })),
   })
 })
 
 app.post("/v1/chat/completions", checkAuth, async (req, res) => {
   const body = req.body || {}
-  const providerName = resolveProvider(body.model)
-  if (!providerName) {
+  const resolved = resolveModel(body.model)
+  if (!resolved) {
     return res.status(400).json({ error: { message: `Unknown model: ${body.model}` } })
   }
-  const provider = PROVIDERS[providerName]
+  const provider = PROVIDERS[resolved.provider]
   if (!provider.apiKey) {
-    return res.status(500).json({ error: { message: `${providerName} API key belum di-set` } })
+    return res.status(500).json({ error: { message: `${resolved.provider} API key belum di-set` } })
   }
-  const model = stripPrefix(body.model)
 
   try {
     if (provider.type === "openai") {
-      return await handleOpenAI(provider, { ...body, model }, res)
+      return await handleOpenAI(provider, { ...body, model: resolved.model }, res)
     }
-    return await handleAnthropic(provider, { ...body, model }, res)
+    return await handleAnthropic(provider, { ...body, model: resolved.model }, res)
   } catch (err) {
     console.error(err)
     if (!res.headersSent) res.status(500).json({ error: { message: String(err) } })
@@ -236,4 +268,5 @@ async function handleAnthropic(provider, body, res) {
 
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`Gateway jalan di port ${PORT}`)
+  console.log(`Model siap: ${Object.keys(MODEL_ALIASES).join(", ")}`)
 })

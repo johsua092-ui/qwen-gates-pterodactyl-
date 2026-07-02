@@ -1,0 +1,106 @@
+{
+  "_comment": "Egg buat Multi-Model Gateway. Import di Pterodactyl: Admin > Nests > Import Egg.",
+  "meta": {
+    "version": "PTDL_v2",
+    "update_url": null
+  },
+  "exported_at": "2026-07-02T00:00:00+00:00",
+  "name": "Multi-Model Gateway",
+  "author": "johsuacuy@gmail.com",
+  "description": "Gateway OpenAI-compatible yang nge-proxy ke Qwen, GLM, dan Claude. Alias model: opus-4.8, sonnet-5, fable-5, qwen-max-3.7, qwen-plus-3.7, glm-5.2.",
+  "features": null,
+  "docker_images": {
+    "Node 22": "ghcr.io/parkervcp/yolks:nodejs_22",
+    "Node 20": "ghcr.io/parkervcp/yolks:nodejs_20",
+    "Node 18": "ghcr.io/parkervcp/yolks:nodejs_18"
+  },
+  "file_denylist": [],
+  "startup": "if [ -f /home/container/package.json ]; then npm install --no-audit --no-fund; fi; node /home/container/server.js",
+  "config": {
+    "files": "{}",
+    "startup": "{\r\n    \"done\": \"Gateway jalan di port\"\r\n}",
+    "logs": "{}",
+    "stop": "^C"
+  },
+  "scripts": {
+    "installation": {
+      "script": "#!/bin/ash\r\n# Install deps: clone repo (kalau kosong) lalu npm install.\r\napk add --no-cache git curl\r\nmkdir -p /mnt/server\r\ncd /mnt/server\r\n\r\nif [ -n \"${GIT_ADDRESS}\" ] && [ ! -f package.json ]; then\r\n  echo \"Cloning ${GIT_ADDRESS} ...\"\r\n  git clone \"${GIT_ADDRESS}\" .\r\nfi\r\n\r\nif [ -f package.json ]; then\r\n  npm install --no-audit --no-fund --omit=dev\r\nfi\r\n\r\necho \"Install selesai.\"",
+      "container": "ghcr.io/parkervcp/installers:alpine",
+      "entrypoint": "ash"
+    }
+  },
+  "variables": [
+    {
+      "name": "Git Repo",
+      "description": "URL repo git buat di-clone saat install. Kosongin kalau kamu upload file manual.",
+      "env_variable": "GIT_ADDRESS",
+      "default_value": "https://github.com/johsua092-ui/qwen-gates-pterodactyl-.git",
+      "user_viewable": true,
+      "user_editable": true,
+      "rules": "nullable|string"
+    },
+    {
+      "name": "Gateway Key",
+      "description": "Kunci yang wajib dikirim client (Authorization: Bearer <kunci>). Kosongin = auth mati.",
+      "env_variable": "GATEWAY_KEY",
+      "default_value": "",
+      "user_viewable": true,
+      "user_editable": true,
+      "rules": "nullable|string"
+    },
+    {
+      "name": "Qwen API Key",
+      "description": "API key DashScope/Qwen.",
+      "env_variable": "QWEN_API_KEY",
+      "default_value": "",
+      "user_viewable": true,
+      "user_editable": true,
+      "rules": "nullable|string"
+    },
+    {
+      "name": "GLM API Key",
+      "description": "API key Zhipu/GLM.",
+      "env_variable": "GLM_API_KEY",
+      "default_value": "",
+      "user_viewable": true,
+      "user_editable": true,
+      "rules": "nullable|string"
+    },
+    {
+      "name": "Claude API Key",
+      "description": "API key Anthropic/Claude.",
+      "env_variable": "CLAUDE_API_KEY",
+      "default_value": "",
+      "user_viewable": true,
+      "user_editable": true,
+      "rules": "nullable|string"
+    },
+    {
+      "name": "Qwen Base URL",
+      "description": "Override endpoint Qwen (region China: https://dashscope.aliyuncs.com/compatible-mode/v1).",
+      "env_variable": "QWEN_BASE_URL",
+      "default_value": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+      "user_viewable": true,
+      "user_editable": true,
+      "rules": "nullable|string"
+    },
+    {
+      "name": "GLM Base URL",
+      "description": "Override endpoint GLM.",
+      "env_variable": "GLM_BASE_URL",
+      "default_value": "https://open.bigmodel.cn/api/paas/v4",
+      "user_viewable": true,
+      "user_editable": true,
+      "rules": "nullable|string"
+    },
+    {
+      "name": "Claude Base URL",
+      "description": "Override endpoint Anthropic.",
+      "env_variable": "CLAUDE_BASE_URL",
+      "default_value": "https://api.anthropic.com/v1",
+      "user_viewable": true,
+      "user_editable": true,
+      "rules": "nullable|string"
+    }
+  ]
+}
