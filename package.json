@@ -1,12 +1,14 @@
 {
   "name": "multi-model-gateway",
-  "version": "1.0.0",
-  "type": "module",
+  "version": "2.0.0",
+  "description": "Multi-Model AI Gateway with Account Rotation",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "cli": "node cli.js"
   },
   "dependencies": {
+    "dotenv": "^17.4.2",
     "express": "^4.19.2"
   }
 }
