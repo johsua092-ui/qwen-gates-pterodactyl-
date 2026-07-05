@@ -1,119 +1,213 @@
 import express from "express";
 import { isValidKey } from "../utils/auth.js";
-import { handleOpenAI } from "../adapters/openai.js";
-import { handleAnthropic } from "../adapters/anthropic.js";
+import { createRequire } from "node:module";
+
+const require = createRequire(import.meta.url);
+const { createScraper, listProviders } = require("../scrapers/index.js");
+const pool = require("../lib/pool.js");
+const monitor = require("../lib/monitor.js");
 
 const router = express.Router();
 
-const PROVIDERS = {
-  qwen: {
-    baseUrl: process.env.QWEN_BASE_URL || "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
-    apiKey: process.env.QWEN_API_KEY || "",
-    type: "openai",
-  },
-  glm: {
-    baseUrl: process.env.GLM_BASE_URL || "https://open.bigmodel.cn/api/paas/v4",
-    apiKey: process.env.GLM_API_KEY || "",
-    type: "openai",
-  },
-  claude: {
-    baseUrl: process.env.CLAUDE_BASE_URL || "https://api.anthropic.com/v1",
-    apiKey: process.env.CLAUDE_API_KEY || "",
-    type: "anthropic",
-  },
-  moonshot: {
-    baseUrl: process.env.MOONSHOT_BASE_URL || "https://api.moonshot.cn/v1",
-    apiKey: process.env.MOONSHOT_API_KEY || "",
-    type: "openai",
-  },
-  openai: {
-    baseUrl: process.env.OPENAI_BASE_URL || "https://api.openai.com/v1",
-    apiKey: process.env.OPENAI_API_KEY || "",
-    type: "openai",
-  }
-};
-
-function resolveProvider(model = "") {
-  const m = String(model).toLowerCase();
-  if (m.includes("/")) {
-    const p = m.split("/")[0];
-    if (PROVIDERS[p]) return p;
-  }
-  if (m.startsWith("qwen")) return "qwen";
-  if (m.startsWith("glm")) return "glm";
-  if (m.startsWith("claude")) return "claude";
-  if (m.startsWith("moonshot") || m.startsWith("kimi")) return "moonshot";
-  if (m.startsWith("gpt") || m.startsWith("o1") || m.startsWith("o3")) return "openai";
-  return null;
-}
-
-function stripPrefix(model) {
-  return String(model).includes("/") ? String(model).split("/").slice(1).join("/") : model;
-}
-
-// Authentication middleware
+// --- Auth middleware ---
 function checkAuth(req, res, next) {
-  // If no auth keys configured, bypass
-  if (!process.env.GATEWAY_KEY && false /* check if JSON has no keys too? Let's just use isValidKey */) {
-    // Actually, let's always require auth if keys exist, or if GATEWAY_KEY is set.
-    // If no keys exist and GATEWAY_KEY is empty, we allow. But let's simplify:
-  }
-  
-  const auth = req.headers["authorization"] || "";
-  const token = auth.replace(/^Bearer\s+/i, "");
-  
-  if (!token) {
-    return res.status(401).json({ error: { message: "Missing API key" } });
-  }
-  
-  if (!isValidKey(token)) {
-    return res.status(401).json({ error: { message: "Invalid API key" } });
+  const key =
+    req.headers.authorization?.replace("Bearer ", "") ||
+    req.query.api_key ||
+    "";
+  if (process.env.GATEWAY_KEY && !isValidKey(key)) {
+    return res.status(401).json({ error: { message: "Unauthorized" } });
   }
   next();
 }
 
+// --- Model → provider mapping ---
+const MODEL_MAP = {
+  "qwen3-max": "qwen",
+  "qwen3-max-thinking": "qwen",
+  "qwen-max": "qwen",
+  "qwen-plus": "qwen",
+  "qwen-turbo": "qwen",
+  "qwen3.7-plus": "qwen",
+  "kimi": "kimi",
+  "kimi-2.7-coder": "kimi",
+  "moonshot-v1-8k": "kimi",
+  "moonshot-v1-32k": "kimi",
+  "claude-3-5-sonnet": "claude",
+  "claude-3-5-sonnet-20241022": "claude",
+  "claude-sonnet-4-20250514": "claude",
+  "claude-3-5-haiku": "claude",
+  "claude-3-5-haiku-20241022": "claude",
+  "claude-opus-4-8-20250625": "claude",
+  "claude-opus-4.8": "claude",
+};
+
+function resolveProvider(model) {
+  if (!model) return null;
+  if (MODEL_MAP[model]) return MODEL_MAP[model];
+  const m = model.toLowerCase();
+  if (m.includes("qwen")) return "qwen";
+  if (m.includes("moonshot") || m.includes("kimi")) return "kimi";
+  if (m.includes("claude")) return "claude";
+  return null;
+}
+
+// ============================================================
+// GET /v1/models — list available models
+// ============================================================
 router.get("/v1/models", checkAuth, (req, res) => {
-  const ids = [
-    "qwen-plus", "qwen-max", "qwen-turbo",
-    "glm-4-plus", "glm-4", "glm-4-flash", "glm-5.2",
-    "claude-3-5-sonnet-20241022", "claude-3-5-haiku-20241022",
-    "claude-3-7-sonnet", "claude-3-5-fable", "claude-4-8-opus",
-    "moonshot-v1-8k", "moonshot-v1-32k", "kimi-2.7-coder",
-    "gpt-4o", "gpt-5.5"
-  ];
+  const models = Object.keys(MODEL_MAP);
   res.json({
     object: "list",
-    data: ids.map((id) => ({ id, object: "model", owned_by: resolveProvider(id) })),
+    data: models.map((id) => ({
+      id,
+      object: "model",
+      owned_by: MODEL_MAP[id],
+    })),
   });
 });
 
+// ============================================================
+// POST /v1/chat/completions — main endpoint (scraper + rotation)
+// ============================================================
 router.post("/v1/chat/completions", checkAuth, async (req, res) => {
   const body = req.body || {};
   const providerName = resolveProvider(body.model);
+
   if (!providerName) {
-    return res.status(400).json({ error: { message: `Unknown model: ${body.model}` } });
+    return res.status(400).json({
+      error: { message: `Unknown or unsupported model: ${body.model}` },
+    });
   }
-  const provider = PROVIDERS[providerName];
-  if (!provider.apiKey) {
-    return res.status(500).json({ error: { message: `${providerName} API key belum di-set` } });
+
+  const account = pool.getNextAccount(providerName);
+
+  if (!account) {
+    return res.status(429).json({
+      error: {
+        message: `No available ${providerName} accounts. Add accounts via POST /accounts`,
+        retry_after: 60,
+      },
+    });
   }
-  
-  // Custom mapping for specific requested models
-  let model = stripPrefix(body.model);
-  if (model === "kimi-2.7-coder") model = "moonshot-v1-32k"; // fallback map if needed
-  if (model === "claude-5-sonnet") model = "claude-3-5-sonnet-20241022"; // map
-  if (model === "glm5.2") model = "glm-4-plus"; // map
+
+  const accountId = account.id;
 
   try {
-    if (provider.type === "openai") {
-      return await handleOpenAI(provider, { ...body, model }, res);
+    const scraper = createScraper(providerName, account.credential);
+    const messages = body.messages || [];
+    const stream = !!body.stream;
+    const model = body.model;
+
+    if (stream) {
+      await scraper.chat(messages, model, true, res);
+      monitor.recordRequest(providerName, true);
+      pool.releaseAccount(accountId);
+      return;
     }
-    return await handleAnthropic(provider, { ...body, model }, res);
+
+    const result = await scraper.chat(messages, model, false, res);
+    monitor.recordRequest(providerName, true);
+    pool.releaseAccount(accountId);
+    return res.json(result);
   } catch (err) {
-    console.error(err);
-    if (!res.headersSent) res.status(500).json({ error: { message: String(err) } });
-    else res.end();
+    console.error(`[${providerName}] Error:`, err.message);
+    monitor.recordRequest(providerName, false);
+
+    if (
+      err.message?.includes("429") ||
+      err.message?.includes("rate") ||
+      err.message?.includes("limit")
+    ) {
+      pool.cooldownAccount(accountId, 120000);
+    } else {
+      pool.releaseAccount(accountId);
+    }
+
+    if (!res.headersSent) {
+      res.status(500).json({ error: { message: String(err.message || err) } });
+    } else {
+      res.end();
+    }
   }
+});
+
+// ============================================================
+// Account Management API
+// ============================================================
+
+router.get("/accounts", checkAuth, (req, res) => {
+  const accounts = pool.getAllAccounts();
+  const sanitized = accounts.map((a) => ({
+    ...a,
+    credential: a.credential
+      ? a.credential.slice(0, 20) + "..." + a.credential.slice(-10)
+      : "",
+  }));
+  res.json({ accounts: sanitized, total: sanitized.length });
+});
+
+router.post("/accounts", checkAuth, (req, res) => {
+  const { provider, email, credential, credentialType } = req.body || {};
+
+  if (!provider || !credential) {
+    return res.status(400).json({
+      error: { message: "provider and credential are required" },
+    });
+  }
+
+  const account = pool.addAccount({
+    provider,
+    email: email || "",
+    credential,
+    credentialType: credentialType || "cookie",
+  });
+
+  res.status(201).json({ status: true, account });
+});
+
+router.delete("/accounts/:id", checkAuth, (req, res) => {
+  const removed = pool.removeAccount(req.params.id);
+  if (!removed) {
+    return res.status(404).json({ error: { message: "Account not found" } });
+  }
+  res.json({ status: true, message: "Account removed" });
+});
+
+router.patch("/accounts/:id/toggle", checkAuth, (req, res) => {
+  const { disabled } = req.body || {};
+  const account = pool.toggleAccount(req.params.id, !!disabled);
+  if (!account) {
+    return res.status(404).json({ error: { message: "Account not found" } });
+  }
+  res.json({ status: true, account });
+});
+
+// ============================================================
+// Monitor / Stats API
+// ============================================================
+
+router.get("/monitor/stats", checkAuth, (req, res) => {
+  const stats = monitor.getStats();
+  const accounts = pool.getAllAccounts();
+  const byProvider = {};
+  for (const a of accounts) {
+    if (!byProvider[a.provider]) byProvider[a.provider] = [];
+    byProvider[a.provider].push(a);
+  }
+  res.json({
+    ...stats,
+    accounts: {
+      total: accounts.length,
+      active: accounts.filter((a) => !a.disabled).length,
+      disabled: accounts.filter((a) => a.disabled).length,
+      byProvider,
+    },
+  });
+});
+
+router.get("/monitor/providers", checkAuth, (req, res) => {
+  res.json({ providers: listProviders() });
 });
 
 export default router;
