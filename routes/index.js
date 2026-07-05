@@ -6,6 +6,7 @@ const require = createRequire(import.meta.url);
 const { createScraper, listProviders } = require("../scrapers/index.js");
 const pool = require("../lib/pool.js");
 const monitor = require("../lib/monitor.js");
+const provisioner = require("../lib/provisioner.js");
 
 const router = express.Router();
 
@@ -208,6 +209,65 @@ router.get("/monitor/stats", checkAuth, (req, res) => {
 
 router.get("/monitor/providers", checkAuth, (req, res) => {
   res.json({ providers: listProviders() });
+});
+
+// ============================================================
+// Provisioning API — auto-generate accounts
+// ============================================================
+
+// POST /provision — auto-create a new account (email → register → verify → pool)
+router.post("/provision", checkAuth, async (req, res) => {
+  const { provider } = req.body || {};
+  if (!provider) {
+    return res.status(400).json({ error: { message: "provider is required (qwen, kimi, claude)" } });
+  }
+
+  try {
+    const progress = [];
+    const result = await provisioner.provision(provider, {
+      onProgress: (stage, msg) => progress.push({ stage, msg, ts: new Date().toISOString() }),
+    });
+
+    res.json({
+      status: true,
+      message: `Account ${result.email} provisioned and added to pool`,
+      account: result.account,
+      progress,
+    });
+  } catch (err) {
+    console.error(`[provision:${provider}] Error:`, err.message);
+    res.status(500).json({ error: { message: String(err.message || err) } });
+  }
+});
+
+// POST /provision/refresh/:id — re-login an existing account to refresh its credential
+router.post("/provision/refresh/:id", checkAuth, async (req, res) => {
+  try {
+    const result = await provisioner.refreshAccount(req.params.id);
+    res.json({
+      status: true,
+      message: "Account credential refreshed",
+      credential: result.credential.slice(0, 20) + "...",
+    });
+  } catch (err) {
+    res.status(500).json({ error: { message: String(err.message || err) } });
+  }
+});
+
+// POST /provision/validate — validate all accounts and mark expired ones
+router.post("/provision/validate", checkAuth, async (req, res) => {
+  try {
+    const results = await provisioner.validateAllAccounts();
+    res.json({
+      status: true,
+      checked: results.length,
+      valid: results.filter((r) => r.valid).length,
+      invalid: results.filter((r) => !r.valid).length,
+      results,
+    });
+  } catch (err) {
+    res.status(500).json({ error: { message: String(err.message || err) } });
+  }
 });
 
 export default router;

@@ -475,6 +475,47 @@ async function sendPlayground() {
   }
 }
 
+// --- Auto-Provision ---
+async function autoProvision(provider) {
+  if (!confirm(`Auto-generate a new ${provider} account? This will create a temp email, register, and verify automatically.`)) return;
+  
+  const output = document.getElementById("pg-output");
+  output.textContent = `Provisioning ${provider} account... (this takes 1-2 minutes)`;
+  
+  try {
+    const result = await api("/provision", {
+      method: "POST",
+      body: JSON.stringify({ provider }),
+    });
+    
+    if (result.error) {
+      output.textContent = `Error: ${result.error.message}`;
+    } else {
+      output.textContent = `✓ ${result.message}\n\nEmail: ${result.account.email}\nProgress:\n${result.progress.map(p => `  [${p.stage}] ${p.msg}`).join("\n")}`;
+      refresh();
+    }
+  } catch (e) {
+    output.textContent = `Network error: ${e.message}`;
+  }
+}
+
+async function validateAll() {
+  const output = document.getElementById("pg-output");
+  output.textContent = "Validating all accounts...";
+  
+  try {
+    const result = await api("/provision/validate", { method: "POST" });
+    if (result.error) {
+      output.textContent = `Error: ${result.error.message}`;
+    } else {
+      output.textContent = `✓ Checked ${result.checked} accounts\n  Valid: ${result.valid}\n  Invalid: ${result.invalid}\n\n${result.results.map(r => `  ${r.provider}/${r.email}: ${r.valid ? "✓" : "✗"}`).join("\n")}`;
+      refresh();
+    }
+  } catch (e) {
+    output.textContent = `Network error: ${e.message}`;
+  }
+}
+
 // Auto-refresh every 10s
 refresh();
 setInterval(refresh, 10000);
