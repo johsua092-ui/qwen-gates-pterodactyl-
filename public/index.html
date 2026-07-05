@@ -1,0 +1,483 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AIWarp — Signal Room</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#0a0b0f;
+  --surface:#12131a;
+  --surface-2:#1a1b25;
+  --border:#2a2b38;
+  --text:#e8e9f0;
+  --text-dim:#7a7b8e;
+  --accent:#6ee7b7;
+  --qwen:#3b82f6;
+  --kimi:#a855f7;
+  --claude:#f97316;
+  --danger:#ef4444;
+  --warn:#eab308;
+  --ok:#22c55e;
+  --radius:8px;
+  --mono:'JetBrains Mono',monospace;
+  --sans:'Inter',system-ui,sans-serif;
+}
+html{font-size:14px}
+body{
+  background:var(--bg);
+  color:var(--text);
+  font-family:var(--sans);
+  min-height:100vh;
+  line-height:1.5;
+}
+a{color:var(--accent);text-decoration:none}
+
+/* --- Layout --- */
+.shell{max-width:1200px;margin:0 auto;padding:24px 20px}
+
+/* --- Header --- */
+.header{
+  display:flex;align-items:center;justify-content:space-between;
+  padding-bottom:20px;border-bottom:1px solid var(--border);
+  margin-bottom:28px;
+}
+.header h1{
+  font-family:var(--mono);font-size:1.1rem;font-weight:600;
+  letter-spacing:-.02em;display:flex;align-items:center;gap:10px;
+}
+.header h1 .dot{
+  width:8px;height:8px;border-radius:50%;background:var(--accent);
+  animation:pulse 2s ease-in-out infinite;
+}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+.header .meta{font-family:var(--mono);font-size:.75rem;color:var(--text-dim)}
+
+/* --- Stats Grid --- */
+.stats{
+  display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));
+  gap:12px;margin-bottom:28px;
+}
+.stat-card{
+  background:var(--surface);border:1px solid var(--border);
+  border-radius:var(--radius);padding:16px;
+}
+.stat-card .label{
+  font-size:.7rem;text-transform:uppercase;letter-spacing:.08em;
+  color:var(--text-dim);font-weight:600;margin-bottom:6px;
+}
+.stat-card .value{
+  font-family:var(--mono);font-size:1.6rem;font-weight:700;
+  letter-spacing:-.03em;
+}
+.stat-card .sub{font-size:.7rem;color:var(--text-dim);margin-top:4px}
+
+/* --- Section --- */
+.section{margin-bottom:32px}
+.section-head{
+  display:flex;align-items:center;justify-content:space-between;
+  margin-bottom:14px;
+}
+.section-head h2{
+  font-family:var(--mono);font-size:.85rem;font-weight:600;
+  letter-spacing:.02em;
+}
+.section-head .actions{display:flex;gap:8px}
+
+/* --- Buttons --- */
+.btn{
+  font-family:var(--mono);font-size:.75rem;font-weight:500;
+  padding:7px 14px;border-radius:6px;border:1px solid var(--border);
+  background:var(--surface-2);color:var(--text);cursor:pointer;
+  transition:all .15s;
+}
+.btn:hover{border-color:var(--accent);color:var(--accent)}
+.btn.primary{background:var(--accent);color:var(--bg);border-color:var(--accent)}
+.btn.primary:hover{opacity:.85}
+.btn.danger{border-color:var(--danger);color:var(--danger)}
+.btn.danger:hover{background:var(--danger);color:#fff}
+.btn.sm{padding:4px 10px;font-size:.7rem}
+
+/* --- Account Table --- */
+.table-wrap{
+  background:var(--surface);border:1px solid var(--border);
+  border-radius:var(--radius);overflow:hidden;
+}
+table{width:100%;border-collapse:collapse}
+th{
+  text-align:left;padding:10px 14px;font-size:.7rem;
+  text-transform:uppercase;letter-spacing:.08em;color:var(--text-dim);
+  font-weight:600;border-bottom:1px solid var(--border);
+  background:var(--surface-2);
+}
+td{
+  padding:10px 14px;border-bottom:1px solid var(--border);
+  font-size:.8rem;vertical-align:middle;
+}
+tr:last-child td{border-bottom:none}
+tr:hover td{background:rgba(110,231,183,.03)}
+
+.provider-badge{
+  font-family:var(--mono);font-size:.7rem;font-weight:600;
+  padding:3px 8px;border-radius:4px;display:inline-block;
+}
+.provider-badge.qwen{background:rgba(59,130,246,.15);color:var(--qwen)}
+.provider-badge.kimi{background:rgba(168,85,247,.15);color:var(--kimi)}
+.provider-badge.claude{background:rgba(249,115,22,.15);color:var(--claude)}
+
+.status-dot{
+  width:7px;height:7px;border-radius:50%;display:inline-block;
+  margin-right:6px;
+}
+.status-dot.ok{background:var(--ok)}
+.status-dot.cooldown{background:var(--warn)}
+.status-dot.disabled{background:var(--danger)}
+
+.credential-cell{
+  font-family:var(--mono);font-size:.7rem;color:var(--text-dim);
+  max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
+
+/* --- Modal --- */
+.modal-overlay{
+  position:fixed;inset:0;background:rgba(0,0,0,.65);
+  display:none;align-items:center;justify-content:center;z-index:100;
+  backdrop-filter:blur(4px);
+}
+.modal-overlay.open{display:flex}
+.modal{
+  background:var(--surface);border:1px solid var(--border);
+  border-radius:12px;padding:28px;width:100%;max-width:440px;
+}
+.modal h3{
+  font-family:var(--mono);font-size:.95rem;font-weight:600;
+  margin-bottom:20px;
+}
+.field{margin-bottom:14px}
+.field label{
+  display:block;font-size:.7rem;text-transform:uppercase;
+  letter-spacing:.06em;color:var(--text-dim);font-weight:600;
+  margin-bottom:5px;
+}
+.field input,.field select,.field textarea{
+  width:100%;padding:9px 12px;border-radius:6px;
+  border:1px solid var(--border);background:var(--surface-2);
+  color:var(--text);font-family:var(--mono);font-size:.8rem;
+}
+.field input:focus,.field select:focus,.field textarea:focus{
+  outline:none;border-color:var(--accent);
+}
+.field textarea{resize:vertical;min-height:80px}
+.modal-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:20px}
+
+/* --- Playground --- */
+.playground{
+  background:var(--surface);border:1px solid var(--border);
+  border-radius:var(--radius);padding:20px;
+}
+.playground .row{display:flex;gap:10px;margin-bottom:12px;flex-wrap:wrap}
+.playground select,.playground input{
+  padding:8px 12px;border-radius:6px;border:1px solid var(--border);
+  background:var(--surface-2);color:var(--text);font-family:var(--mono);
+  font-size:.8rem;
+}
+.playground textarea{
+  width:100%;min-height:80px;padding:10px 12px;border-radius:6px;
+  border:1px solid var(--border);background:var(--surface-2);
+  color:var(--text);font-family:var(--mono);font-size:.8rem;
+  resize:vertical;margin-bottom:12px;
+}
+.playground .output{
+  background:var(--bg);border:1px solid var(--border);border-radius:6px;
+  padding:14px;font-family:var(--mono);font-size:.75rem;
+  max-height:300px;overflow-y:auto;white-space:pre-wrap;
+  color:var(--text-dim);margin-top:12px;
+}
+
+/* --- Empty State --- */
+.empty{
+  text-align:center;padding:40px 20px;color:var(--text-dim);
+  font-size:.85rem;
+}
+.empty .icon{font-size:2rem;margin-bottom:10px;opacity:.4}
+
+/* --- Responsive --- */
+@media(max-width:640px){
+  .stats{grid-template-columns:repeat(2,1fr)}
+  .header{flex-direction:column;align-items:flex-start;gap:8px}
+  td,th{padding:8px 10px;font-size:.7rem}
+}
+</style>
+</head>
+<body>
+<div class="shell">
+  <!-- Header -->
+  <header class="header">
+    <h1><span class="dot"></span>AIWarp Signal Room</h1>
+    <span class="meta" id="uptime">connecting...</span>
+  </header>
+
+  <!-- Stats -->
+  <div class="stats" id="stats-grid">
+    <div class="stat-card">
+      <div class="label">Total Requests</div>
+      <div class="value" id="stat-requests">—</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Errors</div>
+      <div class="value" id="stat-errors" style="color:var(--danger)">—</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Accounts</div>
+      <div class="value" id="stat-accounts">—</div>
+      <div class="sub" id="stat-accounts-sub"></div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Providers</div>
+      <div class="value" id="stat-providers">—</div>
+    </div>
+  </div>
+
+  <!-- Accounts -->
+  <div class="section">
+    <div class="section-head">
+      <h2>Accounts</h2>
+      <div class="actions">
+        <button class="btn primary" onclick="openAddModal()">+ Add Account</button>
+        <button class="btn" onclick="refresh()">Refresh</button>
+      </div>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Provider</th>
+            <th>Email</th>
+            <th>Credential</th>
+            <th>Status</th>
+            <th>Requests</th>
+            <th>In Flight</th>
+            <th>Last Used</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="accounts-body">
+          <tr><td colspan="8" class="empty"><div class="icon">📡</div>No accounts yet — add one to start routing requests.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Playground -->
+  <div class="section">
+    <div class="section-head">
+      <h2>Playground</h2>
+    </div>
+    <div class="playground">
+      <div class="row">
+        <select id="pg-model">
+          <option value="qwen3-max">qwen3-max</option>
+          <option value="qwen-plus">qwen-plus</option>
+          <option value="kimi">kimi</option>
+          <option value="claude-sonnet-4-20250514">claude-sonnet-4</option>
+          <option value="claude-opus-4-8-20250625">claude-opus-4.8</option>
+        </select>
+        <input type="text" id="pg-key" placeholder="Gateway key (optional)" style="flex:1;min-width:140px">
+      </div>
+      <textarea id="pg-prompt" placeholder="Type your message...">Hello, what can you do?</textarea>
+      <button class="btn primary" onclick="sendPlayground()">Send</button>
+      <div class="output" id="pg-output">Response will appear here...</div>
+    </div>
+  </div>
+</div>
+
+<!-- Add Account Modal -->
+<div class="modal-overlay" id="add-modal">
+  <div class="modal">
+    <h3>Add Account</h3>
+    <div class="field">
+      <label>Provider</label>
+      <select id="add-provider">
+        <option value="qwen">Qwen (cookie)</option>
+        <option value="kimi">Kimi/Moonshot (token)</option>
+        <option value="claude">Claude (session key)</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>Email (optional)</label>
+      <input type="email" id="add-email" placeholder="user@example.com">
+    </div>
+    <div class="field">
+      <label>Credential</label>
+      <textarea id="add-credential" placeholder="Paste cookie, token, or session key here..."></textarea>
+    </div>
+    <div class="field">
+      <label>Credential Type</label>
+      <select id="add-type">
+        <option value="cookie">cookie</option>
+        <option value="token">token</option>
+        <option value="session_key">session_key</option>
+      </select>
+    </div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeAddModal()">Cancel</button>
+      <button class="btn primary" onclick="addAccount()">Add Account</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const API = window.location.origin;
+
+async function api(path, opts = {}) {
+  const headers = { "Content-Type": "application/json", ...(opts.headers || {}) };
+  const key = document.getElementById("pg-key")?.value;
+  if (key) headers["Authorization"] = `Bearer ${key}`;
+  const res = await fetch(`${API}${path}`, { ...opts, headers });
+  return res.json();
+}
+
+async function refresh() {
+  try {
+    const [stats, accounts, providers] = await Promise.all([
+      api("/monitor/stats"),
+      api("/accounts"),
+      api("/monitor/providers"),
+    ]);
+
+    // Stats
+    document.getElementById("stat-requests").textContent = stats.totalRequests ?? 0;
+    document.getElementById("stat-errors").textContent = stats.totalErrors ?? 0;
+    document.getElementById("stat-accounts").textContent = stats.accounts?.total ?? 0;
+    document.getElementById("stat-accounts-sub").textContent =
+      `${stats.accounts?.active ?? 0} active · ${stats.accounts?.disabled ?? 0} disabled`;
+    document.getElementById("stat-providers").textContent = providers.providers?.length ?? 0;
+    document.getElementById("uptime").textContent = `uptime ${formatUptime(stats.uptime ?? 0)}`;
+
+    // Accounts table
+    const tbody = document.getElementById("accounts-body");
+    const list = accounts.accounts || [];
+    if (list.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="8" class="empty"><div class="icon">📡</div>No accounts yet — add one to start routing requests.</td></tr>`;
+    } else {
+      tbody.innerHTML = list.map(a => {
+        const statusClass = a.disabled ? "disabled" : (a.throttleStatus === "cooldown" ? "cooldown" : "ok");
+        const statusLabel = a.disabled ? "Disabled" : (a.throttleStatus === "cooldown" ? "Cooldown" : "Active");
+        const lastUsed = a.lastUsed ? timeAgo(a.lastUsed) : "never";
+        return `<tr>
+          <td><span class="provider-badge ${a.provider}">${a.provider}</span></td>
+          <td>${a.email || "—"}</td>
+          <td class="credential-cell" title="${esc(a.credential)}">${a.credential}</td>
+          <td><span class="status-dot ${statusClass}"></span>${statusLabel}</td>
+          <td style="font-family:var(--mono)">${a.totalReqs}</td>
+          <td style="font-family:var(--mono)">${a.inFlight}</td>
+          <td style="color:var(--text-dim);font-size:.75rem">${lastUsed}</td>
+          <td>
+            <button class="btn sm ${a.disabled ? '' : 'danger'}" onclick="toggleAccount('${a.id}',${!a.disabled})">${a.disabled ? 'Enable' : 'Disable'}</button>
+            <button class="btn sm danger" onclick="deleteAccount('${a.id}')" style="margin-left:4px">✕</button>
+          </td>
+        </tr>`;
+      }).join("");
+    }
+  } catch (e) {
+    console.error("refresh error:", e);
+  }
+}
+
+function formatUptime(s) {
+  if (s < 60) return `${s}s`;
+  if (s < 3600) return `${Math.floor(s/60)}m ${s%60}s`;
+  const h = Math.floor(s/3600);
+  const m = Math.floor((s%3600)/60);
+  return `${h}h ${m}m`;
+}
+
+function timeAgo(iso) {
+  const diff = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+  if (diff < 60) return `${diff}s ago`;
+  if (diff < 3600) return `${Math.floor(diff/60)}m ago`;
+  return `${Math.floor(diff/3600)}h ago`;
+}
+
+function esc(s) { return (s||"").replace(/"/g, "&quot;").replace(/</g, "&lt;"); }
+
+// --- Modal ---
+function openAddModal() {
+  document.getElementById("add-modal").classList.add("open");
+}
+function closeAddModal() {
+  document.getElementById("add-modal").classList.remove("open");
+}
+
+async function addAccount() {
+  const provider = document.getElementById("add-provider").value;
+  const email = document.getElementById("add-email").value;
+  const credential = document.getElementById("add-credential").value;
+  const credentialType = document.getElementById("add-type").value;
+
+  if (!credential) return alert("Credential is required");
+
+  await api("/accounts", {
+    method: "POST",
+    body: JSON.stringify({ provider, email, credential, credentialType }),
+  });
+
+  closeAddModal();
+  document.getElementById("add-credential").value = "";
+  document.getElementById("add-email").value = "";
+  refresh();
+}
+
+async function toggleAccount(id, disabled) {
+  await api(`/accounts/${id}/toggle`, {
+    method: "PATCH",
+    body: JSON.stringify({ disabled }),
+  });
+  refresh();
+}
+
+async function deleteAccount(id) {
+  if (!confirm("Remove this account?")) return;
+  await api(`/accounts/${id}`, { method: "DELETE" });
+  refresh();
+}
+
+// --- Playground ---
+async function sendPlayground() {
+  const model = document.getElementById("pg-model").value;
+  const prompt = document.getElementById("pg-prompt").value;
+  const output = document.getElementById("pg-output");
+
+  output.textContent = "Sending...";
+
+  try {
+    const result = await api("/v1/chat/completions", {
+      method: "POST",
+      body: JSON.stringify({
+        model,
+        messages: [{ role: "user", content: prompt }],
+        stream: false,
+      }),
+    });
+
+    if (result.error) {
+      output.textContent = `Error: ${result.error.message}`;
+    } else if (result.choices?.[0]?.message?.content) {
+      output.textContent = result.choices[0].message.content;
+    } else {
+      output.textContent = JSON.stringify(result, null, 2);
+    }
+  } catch (e) {
+    output.textContent = `Network error: ${e.message}`;
+  }
+}
+
+// Auto-refresh every 10s
+refresh();
+setInterval(refresh, 10000);
+</script>
+</body>
+</html>
